@@ -1,0 +1,75 @@
+{
+  "$schema": "https://keyfactor.github.io/integration-manifest-schema.json",
+  "integration_type": "orchestrator",
+  "name": "Adobe Experience Manager (Cloud Manager) Orchestrator",
+  "status": "prototype",
+  "link_github": true,
+  "update_catalog": false,
+  "support_level": "kf-community",
+  "description": "Universal Orchestrator extension for managing customer-managed (OV/EV) TLS/SSL certificates on Adobe Experience Manager as a Cloud Service via the Adobe Cloud Manager API.",
+  "release_dir": "AEMCM.Orchestrator/bin/Release",
+  "about": {
+    "orchestrator": {
+      "UOFramework": "10.4",
+      "pam_support": true,
+      "keyfactor_platform_version": "10.4",
+      "store_types": [
+        {
+          "Name": "Adobe Experience Manager Cloud Manager",
+          "ShortName": "AEMCM",
+          "Capability": "AEMCM",
+          "ServerRequired": true,
+          "BlueprintAllowed": false,
+          "PowerShell": false,
+          "PrivateKeyAllowed": "Required",
+          "SupportsCustomAlias": "Required",
+          "CustomAliasAllowed": "Required",
+          "StorePathType": "Freeform",
+          "StorePathValue": "",
+          "SupportedOperations": {
+            "Add": true,
+            "Remove": true,
+            "Enrollment": false,
+            "Discovery": true,
+            "Inventory": true
+          },
+          "PasswordOptions": {
+            "EntrySupported": false,
+            "StoreRequired": false,
+            "Style": "Default"
+          },
+          "Properties": [
+            {
+              "Name": "ImsOrgId",
+              "DisplayName": "IMS Organization ID",
+              "Type": "Secret",
+              "DependsOn": "",
+              "DefaultValue": "",
+              "Required": true,
+              "Description": "Adobe IMS Org ID sent as the x-gw-ims-org-id header."
+            },
+            {
+              "Name": "ImsTokenUrl",
+              "DisplayName": "IMS Token Endpoint",
+              "Type": "String",
+              "DependsOn": "",
+              "DefaultValue": "https://ims-na1.adobelogin.com/ims/token/v3",
+              "Required": false,
+              "Description": "Adobe IMS OAuth Server-to-Server token endpoint."
+            },
+            {
+              "Name": "ImsScopes",
+              "DisplayName": "IMS Scopes",
+              "Type": "String",
+              "DependsOn": "",
+              "DefaultValue": "openid,AdobeID,read_organizations,additional_info.projectedProductContext",
+              "Required": false,
+              "Description": "Comma-separated IMS scopes requested for the access token."
+            }
+          ],
+          "EntryParameters": []
+        }
+      ]
+    }
+  }
+}

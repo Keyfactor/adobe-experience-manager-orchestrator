@@ -1,0 +1,18 @@
+{
+  "extensions": {
+    "Keyfactor.Orchestrators.Extensions.IOrchestratorJobExtension": {
+      "CertStores.AEMCM.Inventory": {
+        "assemblypath": "AEMCM.Orchestrator.dll",
+        "TypeFullName": "Keyfactor.Extensions.Orchestrator.AEMCM.Inventory"
+      },
+      "CertStores.AEMCM.Management": {
+        "assemblypath": "AEMCM.Orchestrator.dll",
+        "TypeFullName": "Keyfactor.Extensions.Orchestrator.AEMCM.Management"
+      },
+      "CertStores.AEMCM.Discovery": {
+        "assemblypath": "AEMCM.Orchestrator.dll",
+        "TypeFullName": "Keyfactor.Extensions.Orchestrator.AEMCM.Discovery"
+      }
+    }
+  }
+}

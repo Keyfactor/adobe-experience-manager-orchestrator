@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- UO 11 = net6.0, UO 12 = net8.0, net10.0 for forward support -->
+    <TargetFrameworks>net6.0;net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>Keyfactor.Extensions.Orchestrator.AEMCM</RootNamespace>
+    <AssemblyName>AEMCM.Orchestrator</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Copyright>Copyright © Keyfactor</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Keyfactor Universal Orchestrator SDK (GitHub Packages feed; see ../nuget.config).
+         Versions match the current reference extensions; pin to your target UO/Command release. -->
+    <PackageReference Include="Keyfactor.Orchestrators.IOrchestratorJobExtensions" Version="1.0.0" />
+    <PackageReference Include="Keyfactor.Orchestrators.Common" Version="3.3.0" />
+    <PackageReference Include="Keyfactor.Logging" Version="1.3.0" />
+    <PackageReference Include="Keyfactor.Platform.IPAMProvider" Version="1.0.0" />
+    <!-- JSON via System.Text.Json (in-box, no package). ASN.1 for SAN parsing. -->
+    <PackageReference Include="System.Formats.Asn1" Version="8.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Both manifests must land in the build output (deployed to extensions/<name>/). -->
+    <None Update="manifest.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="..\integration-manifest.json" Link="integration-manifest.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
