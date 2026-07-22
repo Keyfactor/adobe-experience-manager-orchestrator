@@ -1,9 +1,21 @@
+
+//  Copyright 2026 Keyfactor
+//  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+//  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+//  and limitations under the License.
+
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.Formats.Asn1;
+using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
+using Org.BouncyCastle.Asn1.X509;
+using Org.BouncyCastle.Crypto;
+using Org.BouncyCastle.Crypto.Parameters;
+using Org.BouncyCastle.Pkcs;
+using Org.BouncyCastle.X509;
 
 namespace Keyfactor.Extensions.Orchestrator.AEMCM.Logic
 {
@@ -30,128 +42,90 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM.Logic
     /// <summary>
     /// Splits a Keyfactor-supplied PKCS#12/PFX into leaf certificate, PKCS#8 (unencrypted)
     /// private key, and chain WITHOUT the leaf — the exact shape Cloud Manager requires.
-    /// Depends only on the BCL; deliberately free of any Keyfactor types so it is unit testable.
+    /// Uses BouncyCastle so key export does not depend on the OS key store or Windows CNG
+    /// export policy. Free of Keyfactor types so it is unit testable.
     /// </summary>
     public static class PfxSplitter
     {
-        private const string SubjectAltNameOid = "2.5.29.17";
-
         public static SplitCertificate Split(byte[] pfxBytes, string? password)
         {
             if (pfxBytes == null || pfxBytes.Length == 0)
                 throw new ArgumentException("PFX content is empty.", nameof(pfxBytes));
 
-#if NET9_0_OR_GREATER
-            var collection = X509CertificateLoader.LoadPkcs12Collection(
-                pfxBytes, password, X509KeyStorageFlags.Exportable);
-#else
-            var collection = new X509Certificate2Collection();
-            collection.Import(pfxBytes, password, X509KeyStorageFlags.Exportable);
-#endif
+            var store = new Pkcs12StoreBuilder().Build();
+            using (var ms = new MemoryStream(pfxBytes))
+            {
+                store.Load(ms, (password ?? string.Empty).ToCharArray());
+            }
 
-            X509Certificate2? leaf = FindLeaf(collection);
-            if (leaf == null)
-                throw new InvalidOperationException("PFX did not contain a certificate with a private key.");
+            var keyAlias = store.Aliases.FirstOrDefault(store.IsKeyEntry)
+                ?? throw new InvalidOperationException("PFX did not contain a private key entry.");
 
-            var (algorithm, keySize, pkcs8) = ExportPrivateKey(leaf);
+            var privateKey = store.GetKey(keyAlias).Key;
+            var (algorithm, keySize) = DescribeKey(privateKey);
 
-            var chainCerts = collection
-                .Cast<X509Certificate2>()
-                .Where(c => !c.RawData.SequenceEqual(leaf.RawData))
-                .OrderBy(IsRootCertificate) // intermediates before any root
-                .ToList();
+            var chainEntries = store.GetCertificateChain(keyAlias);
+            X509Certificate leaf;
+            var intermediates = new List<X509Certificate>();
 
-            var chainPem = string.Join(
-                "\n",
-                chainCerts.Select(c => ToPem("CERTIFICATE", c.RawData)));
+            if (chainEntries != null && chainEntries.Length > 0)
+            {
+                leaf = chainEntries[0].Certificate;                       // leaf first
+                intermediates.AddRange(chainEntries.Skip(1).Select(e => e.Certificate)); // leaf EXCLUDED
+            }
+            else
+            {
+                leaf = store.GetCertificate(keyAlias).Certificate;
+            }
+
+            var pkcs8Der = PrivateKeyInfoFactory.CreatePrivateKeyInfo(privateKey).GetDerEncoded();
 
             return new SplitCertificate
             {
-                CertificatePem = ToPem("CERTIFICATE", leaf.RawData),
-                PrivateKeyPkcs8Pem = ToPem("PRIVATE KEY", pkcs8),
-                ChainPem = chainPem,
-                CommonName = leaf.GetNameInfo(X509NameType.SimpleName, forIssuer: false) ?? string.Empty,
-                SubjectAlternativeNames = ReadDnsSans(leaf),
+                CertificatePem = ToPem("CERTIFICATE", leaf.GetEncoded()),
+                PrivateKeyPkcs8Pem = ToPem("PRIVATE KEY", pkcs8Der),
+                ChainPem = string.Join("\n", intermediates.Select(c => ToPem("CERTIFICATE", c.GetEncoded()))),
+                CommonName = GetCommonName(leaf),
+                SubjectAlternativeNames = GetDnsSans(leaf),
                 KeyAlgorithm = algorithm,
                 KeySize = keySize,
             };
         }
 
-        private static X509Certificate2? FindLeaf(X509Certificate2Collection collection)
+        private static (string algorithm, int keySize) DescribeKey(AsymmetricKeyParameter key) => key switch
         {
-            // Prefer an end-entity (non-CA) cert that has the private key.
-            var withKey = collection.Cast<X509Certificate2>().Where(c => c.HasPrivateKey).ToList();
-            if (withKey.Count == 0) return null;
-            return withKey.FirstOrDefault(c => !IsCaCertificate(c)) ?? withKey[0];
+            RsaKeyParameters rsa => ("RSA", rsa.Modulus.BitLength),
+            ECPrivateKeyParameters ec => ("ECDSA", ec.Parameters.N.BitLength),
+            _ => throw new InvalidOperationException(
+                "Leaf certificate uses an unsupported private key algorithm (expected RSA or ECDSA)."),
+        };
+
+        private static string GetCommonName(X509Certificate cert)
+        {
+            var values = cert.SubjectDN.GetValueList(X509Name.CN);
+            return values.Count > 0 ? values[0]?.ToString() ?? string.Empty : string.Empty;
         }
 
-        private static (string algorithm, int keySize, byte[] pkcs8) ExportPrivateKey(X509Certificate2 leaf)
-        {
-            using var rsa = leaf.GetRSAPrivateKey();
-            if (rsa != null)
-                return ("RSA", rsa.KeySize, rsa.ExportPkcs8PrivateKey());
-
-            using var ecdsa = leaf.GetECDsaPrivateKey();
-            if (ecdsa != null)
-                return ("ECDSA", ecdsa.KeySize, ecdsa.ExportPkcs8PrivateKey());
-
-            throw new InvalidOperationException(
-                "Leaf certificate uses an unsupported private key algorithm (expected RSA or ECDSA).");
-        }
-
-        private static bool IsCaCertificate(X509Certificate2 cert)
-        {
-            foreach (var ext in cert.Extensions)
-            {
-                if (ext is X509BasicConstraintsExtension bc)
-                    return bc.CertificateAuthority;
-            }
-            return false;
-        }
-
-        // Sort key: root certs (self-issued) come last in the chain output.
-        private static bool IsRootCertificate(X509Certificate2 cert) =>
-            string.Equals(cert.SubjectName.RawData is { } s ? Convert.ToBase64String(s) : null,
-                          cert.IssuerName.RawData is { } i ? Convert.ToBase64String(i) : null,
-                          StringComparison.Ordinal);
-
-        /// <summary>Parses dNSName entries from the SAN extension (DER) without locale-sensitive string parsing.</summary>
-        private static List<string> ReadDnsSans(X509Certificate2 cert)
+        private static List<string> GetDnsSans(X509Certificate cert)
         {
             var sans = new List<string>();
-            var ext = cert.Extensions[SubjectAltNameOid];
-            if (ext == null) return sans;
+            var altNames = cert.GetSubjectAlternativeNames();
+            if (altNames == null) return sans;
 
-            try
+            foreach (IList? entry in altNames)
             {
-                var reader = new AsnReader(ext.RawData, AsnEncodingRules.DER);
-                var sequence = reader.ReadSequence();
-                while (sequence.HasData)
+                // Each entry is [ int tagType, object value ]; dNSName == GeneralName.DnsName (2).
+                if (entry is { Count: >= 2 } && entry[0] is int tag && tag == GeneralName.DnsName)
                 {
-                    var tag = sequence.PeekTag();
-                    // GeneralName CHOICE: dNSName is context-specific [2], IA5String.
-                    if (tag.TagClass == TagClass.ContextSpecific && tag.TagValue == 2)
-                    {
-                        var dns = sequence.ReadCharacterString(
-                            UniversalTagNumber.IA5String,
-                            new Asn1Tag(TagClass.ContextSpecific, 2));
-                        if (!string.IsNullOrWhiteSpace(dns)) sans.Add(dns);
-                    }
-                    else
-                    {
-                        sequence.ReadEncodedValue(); // skip other GeneralName choices
-                    }
+                    var value = entry[1]?.ToString();
+                    if (!string.IsNullOrWhiteSpace(value)) sans.Add(value!);
                 }
-            }
-            catch (AsnContentException)
-            {
-                // Malformed SAN extension — return whatever we parsed rather than failing the whole job.
             }
 
             return sans;
         }
 
         private static string ToPem(string label, byte[] der) =>
-            new string(PemEncoding.Write(label, der));
+            new string(System.Security.Cryptography.PemEncoding.Write(label, der));
     }
 }

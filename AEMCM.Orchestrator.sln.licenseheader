@@ -1,3 +1,5 @@
+﻿extensions: designer.cs generated.cs
+extensions: .cs .cpp .h
 
 //  Copyright 2026 Keyfactor
 //  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
@@ -6,15 +8,12 @@
 //  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
 //  and limitations under the License.
 
-using System.Threading;
-using System.Threading.Tasks;
+extensions: .aspx .ascx
+<%-- 
 
-namespace Keyfactor.Extensions.Orchestrator.AEMCM.Client
-{
-    /// <summary>Obtains (and caches) Adobe IMS OAuth Server-to-Server access tokens.</summary>
-    public interface IAdobeImsAuthClient
-    {
-        /// <summary>Returns a valid bearer token, refreshing from IMS when the cache is empty or expired.</summary>
-        Task<string> GetAccessTokenAsync(CancellationToken cancellationToken = default);
-    }
-}
+--%>
+extensions: .vb
+extensions:  .xml .config .xsd
+<!--
+
+-->

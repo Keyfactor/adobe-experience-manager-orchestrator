@@ -1,3 +1,11 @@
+
+//  Copyright 2026 Keyfactor
+//  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+//  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+//  and limitations under the License.
+
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -31,7 +39,21 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
 
                 // Report every cert (incl. Adobe-managed DV and expired) so the 70-cert budget is visible.
                 var certs = Client!.GetAllCertificatesAsync().GetAwaiter().GetResult();
-                var items = certs.Select(ToInventoryItem).ToList();
+
+                // Alias = Adobe certificate name. KF-managed names are kept unique on Add, but a
+                // program may already contain externally-created duplicates; disambiguate those with
+                // the id so Command never receives colliding aliases.
+                var duplicateNames = certs
+                    .Where(c => !string.IsNullOrWhiteSpace(c.Name))
+                    .GroupBy(c => c.Name!, StringComparer.OrdinalIgnoreCase)
+                    .Where(g => g.Count() > 1)
+                    .Select(g => g.Key)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                if (duplicateNames.Count > 0)
+                    Logger.LogWarning("Found {Count} duplicate certificate name(s); those aliases are disambiguated with the certificate id.", duplicateNames.Count);
+
+                var items = certs.Select(c => ToInventoryItem(c, duplicateNames)).ToList();
 
                 var accepted = submitInventoryUpdate.Invoke(items);
                 Logger.LogInformation("AEMCM Inventory submitted {Count} item(s); accepted={Accepted}", items.Count, accepted);
@@ -55,7 +77,8 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
             }
         }
 
-        private static CurrentInventoryItem ToInventoryItem(SslCertificateRepresentation cert)
+        private static CurrentInventoryItem ToInventoryItem(
+            SslCertificateRepresentation cert, HashSet<string> duplicateNames)
         {
             var pems = new List<string>();
             if (!string.IsNullOrWhiteSpace(cert.Certificate)) pems.Add(cert.Certificate!);
@@ -64,9 +87,9 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
 
             return new CurrentInventoryItem
             {
-                Alias = string.IsNullOrWhiteSpace(cert.Name)
-                    ? cert.Id.ToString(CultureInfo.InvariantCulture)
-                    : cert.Name!,
+                // Alias = Adobe certificate name (round-trips with enrollment). Fall back to the id
+                // when the name is empty, and disambiguate pre-existing duplicate names with the id.
+                Alias = ResolveAlias(cert, duplicateNames),
                 Certificates = pems,
                 PrivateKeyEntry = true,             // Adobe holds the key; it is never returned to us.
                 UseChainLevel = hasChain,
@@ -74,6 +97,7 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
                 Parameters = new Dictionary<string, object>
                 {
                     ["CertificateId"] = cert.Id,
+                    ["Name"] = cert.Name ?? string.Empty,
                     ["Type"] = cert.SslCertificateType ?? string.Empty,
                     ["Status"] = cert.SslCertificateStatus ?? string.Empty,
                     ["CommonName"] = cert.CommonName ?? string.Empty,
@@ -82,6 +106,16 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
                     ["AdobeManaged"] = cert.IsAdobeManaged,
                 },
             };
+        }
+
+        private static string ResolveAlias(SslCertificateRepresentation cert, HashSet<string> duplicateNames)
+        {
+            if (string.IsNullOrWhiteSpace(cert.Name))
+                return cert.Id.ToString(CultureInfo.InvariantCulture);
+
+            return duplicateNames.Contains(cert.Name!)
+                ? $"{cert.Name} ({cert.Id.ToString(CultureInfo.InvariantCulture)})"
+                : cert.Name!;
         }
     }
 }
