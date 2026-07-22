@@ -25,3 +25,6 @@ secrets.json
 
 ## Reference-only: Cloud Manager OpenAPI spec (kept locally, not committed)
 api.yaml
+
+## License header template (tooling artifact, not committed)
+.licenseheader
