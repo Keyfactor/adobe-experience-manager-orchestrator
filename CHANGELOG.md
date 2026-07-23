@@ -1,0 +1,12 @@
+- 1.0.0
+  - Initial release of the Adobe Experience Manager (Cloud Manager) Universal Orchestrator extension.
+  - Certificate Store Type `AEMCM`; one certificate store maps to one Cloud Manager program (`programId`).
+  - Supported job types: Inventory, Management (Add/Remove), and Discovery.
+  - Authenticates to the Adobe Cloud Manager API using Adobe IMS OAuth Server-to-Server credentials (client credentials); access tokens are cached and refreshed automatically.
+  - Inventory pages through all certificates in a program and reports every certificate — including Adobe-managed (DV) and expired certificates — so the 70-certificate program limit is visible.
+  - Management Add splits the supplied PKCS#12 into leaf certificate, unencrypted PKCS#8 private key, and intermediate chain (leaf excluded), using BouncyCastle so key export does not depend on the OS key store.
+  - Management Add prefers updating an existing certificate (matched by alias or identical SAN set) over creating a new one, to conserve the 70-certificate-per-program budget; validates key type (RSA-2048, EC secp256r1/secp384r1) and the 100-SAN limit before upload.
+  - Management Remove blocks deletion of a certificate that is still referenced by a domain mapping, and refuses to modify or delete Adobe-managed (DV) certificates.
+  - The certificate alias is the Adobe certificate name (Custom Alias required); name uniqueness is enforced on Add so the alias round-trips with inventory.
+  - Discovery enumerates programs per IMS Org ID (supplied in the discovery "Directories to search" field) via the tenant-scoped endpoints and returns each `programId` as a discoverable store path.
+  - PAM support for store credentials and secret custom fields.
