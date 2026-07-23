@@ -1,10 +1,22 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.0.31903.59
+# Visual Studio Version 18
+VisualStudioVersion = 18.8.12009.203 stable
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AEMCM.Orchestrator", "AEMCM.Orchestrator\AEMCM.Orchestrator.csproj", "{1640EE58-48C7-497D-8397-A4AF4BDFEE80}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AEMCM.Orchestrator.Tests", "AEMCM.Orchestrator.Tests\AEMCM.Orchestrator.Tests.csproj", "{09E23D05-C505-4672-AB42-9CE081270CA9}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docsource", "docsource", "{80D8D9AA-52BC-4554-99B4-C27F363A830F}"
+	ProjectSection(SolutionItems) = preProject
+		docsource\aemcm.md = docsource\aemcm.md
+		docsource\content.md = docsource\content.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{6BC603AE-0C5C-4AFE-B206-0EB9C32086D4}"
+	ProjectSection(SolutionItems) = preProject
+		CHANGELOG.md = CHANGELOG.md
+		integration-manifest.json = integration-manifest.json
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

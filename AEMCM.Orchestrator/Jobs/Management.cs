@@ -1,3 +1,11 @@
+
+//  Copyright 2026 Keyfactor
+//  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
+//  Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions
+//  and limitations under the License.
+
 using System;
 using System.Globalization;
 using System.Linq;
@@ -38,83 +46,111 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
             {
                 InitializeStore(config);
 
+                var jobCert = config.JobCertificate;
                 return config.OperationType switch
                 {
-                    CertStoreOperationType.Add => HandleAdd(config),
-                    CertStoreOperationType.Remove => HandleRemove(config),
-                    _ => Fail(config, $"Unsupported operation '{config.OperationType}'."),
+                    CertStoreOperationType.Add => PerformAddition(
+                        jobCert?.Alias, jobCert?.Contents, jobCert?.PrivateKeyPassword,
+                        config.Overwrite, config.JobHistoryId),
+                    CertStoreOperationType.Remove => PerformRemoval(jobCert?.Alias, config.JobHistoryId),
+                    _ => Fail(config.JobHistoryId, $"Unsupported operation '{config.OperationType}'."),
                 };
+            }
+            catch (CloudManagerApiException apiEx)
+            {
+                // Message is already an operator-friendly summary of the Cloud Manager error.
+                Logger.LogError(apiEx, "AEMCM Management: Cloud Manager API error");
+                return Fail(config.JobHistoryId, apiEx.Message);
             }
             catch (Exception ex)
             {
                 Logger.LogError(ex, "AEMCM Management failed");
-                return Fail(config, $"AEMCM Management failed: {ex.Message}");
+                return Fail(config.JobHistoryId, $"AEMCM Management failed: {ex.Message}");
             }
         }
 
-        private JobResult HandleAdd(ManagementJobConfiguration config)
+        /// <summary>
+        /// Add/renew a certificate: split the PFX, validate platform rules, then update an existing
+        /// certificate (matched by alias or SAN set) or create a new one within the 70-cert budget.
+        /// </summary>
+        internal JobResult PerformAddition(
+            string? alias, string? contents, string? pfxPassword, bool overwrite, long jobHistoryId)
         {
-            var jobCert = config.JobCertificate;
-            if (string.IsNullOrWhiteSpace(jobCert?.Contents))
-                return Fail(config, "No certificate contents supplied for Add.");
+            if (string.IsNullOrWhiteSpace(contents))
+                return Fail(jobHistoryId, "No certificate contents supplied for Add.");
 
             // 1. Split the PFX into leaf / PKCS#8 key / chain-without-leaf.
-            var pfxBytes = Convert.FromBase64String(jobCert!.Contents);
             SplitCertificate split;
             try
             {
-                split = PfxSplitter.Split(pfxBytes, jobCert.PrivateKeyPassword);
+                split = PfxSplitter.Split(Convert.FromBase64String(contents!), pfxPassword);
             }
             catch (Exception ex)
             {
-                return Fail(config, $"Could not process the supplied certificate: {ex.Message}");
+                return Fail(jobHistoryId, $"Could not process the supplied certificate: {ex.Message}");
             }
 
             // 2. Validate against platform rules early.
             var validationError = ValidatePlatformRules(split);
-            if (validationError != null) return Fail(config, validationError);
+            if (validationError != null) return Fail(jobHistoryId, validationError);
 
             var body = new CreateOrUpdateSslCertificateBody
             {
-                Name = string.IsNullOrWhiteSpace(jobCert.Alias) ? split.CommonName : jobCert.Alias!,
+                Name = string.IsNullOrWhiteSpace(alias) ? split.CommonName : alias!,
                 Certificate = split.CertificatePem,
                 PrivateKey = new PrivateKeyValue { Value = split.PrivateKeyPkcs8Pem },
                 Chain = split.ChainPem, // leaf already excluded by PfxSplitter
             };
 
+            // Pre-send diagnostic summary. Never logs private key material — only shape/metadata,
+            // so the first upload against a real cert is easy to diagnose (e.g. an empty chain).
+            Logger.LogDebug(
+                "Prepared certificate for upload: name={Name}, CN={CommonName}, SANs={SanCount}, key={KeyAlgorithm}-{KeySize}, chainCerts={ChainCount}.",
+                body.Name, split.CommonName, split.SubjectAlternativeNames.Count,
+                split.KeyAlgorithm, split.KeySize, CountChainCerts(split.ChainPem));
+
             // 3. Decide update vs add.
             var existing = Client!.GetAllCertificatesAsync().GetAwaiter().GetResult();
 
             // Guard: alias explicitly targeting an Adobe-managed (DV) cert.
-            if (config.Overwrite && !string.IsNullOrWhiteSpace(jobCert.Alias))
+            if (overwrite && !string.IsNullOrWhiteSpace(alias))
             {
-                var aliasHit = existing.FirstOrDefault(c => AliasMatches(c, jobCert.Alias!));
+                var aliasHit = existing.FirstOrDefault(c => CertMatcher.AliasMatches(c, alias!));
                 if (aliasHit is { IsAdobeManaged: true })
-                    return Fail(config, $"Alias '{jobCert.Alias}' resolves to an Adobe-managed (DV) certificate, which cannot be modified.");
+                    return Fail(jobHistoryId, $"Alias '{alias}' resolves to an Adobe-managed (DV) certificate, which cannot be modified.");
+            }
+
+            // Enforce name uniqueness (alias = Adobe cert name). Without Overwrite, a duplicate name
+            // is rejected so the alias stays a stable, round-tripping key.
+            if (!overwrite
+                && existing.Any(c => string.Equals(c.Name, body.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return Fail(jobHistoryId,
+                    $"A certificate named '{body.Name}' already exists in this program. Enable Overwrite to update it.");
             }
 
             var match = CertMatcher.FindMatch(
-                existing, split.SubjectAlternativeNames, jobCert.Alias, config.Overwrite, AllowSupersetConsolidation);
+                existing, split.SubjectAlternativeNames, alias, overwrite, AllowSupersetConsolidation);
 
             if (match.IsMatch)
             {
-                if (!config.Overwrite && match.MatchType != CertMatchType.Alias)
+                if (!overwrite && match.MatchType != CertMatchType.Alias)
                 {
-                    return Fail(config,
+                    return Fail(jobHistoryId,
                         $"An equivalent certificate (id {match.Certificate!.Id}) already exists. Enable Overwrite to update it.");
                 }
 
                 Logger.LogInformation("Updating existing certificate id {Id} (match={Match})",
                     match.Certificate!.Id, match.MatchType);
                 var updated = Client.UpdateCertificateAsync(match.Certificate.Id, body).GetAwaiter().GetResult();
-                return Success(config, $"Updated certificate id {updated.Id}.");
+                return Success(jobHistoryId, $"Updated certificate id {updated.Id}.");
             }
 
             // 4. No match → create, budget permitting.
             if (BudgetManager.HasBudgetForNew(existing.Count))
             {
                 var created = Client.CreateCertificateAsync(body).GetAwaiter().GetResult();
-                return Success(config, $"Created certificate id {created.Id}.");
+                return Success(jobHistoryId, $"Created certificate id {created.Id}.");
             }
 
             // 5. Budget exhausted → optional reclaim, else fail.
@@ -126,44 +162,58 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
                     Logger.LogWarning("Budget full; reclaiming expired certificate id {Id}", reclaim.Id);
                     Client.DeleteCertificateAsync(reclaim.Id).GetAwaiter().GetResult();
                     var created = Client.CreateCertificateAsync(body).GetAwaiter().GetResult();
-                    return Success(config, $"Reclaimed expired id {reclaim.Id}; created certificate id {created.Id}.");
+                    return Success(jobHistoryId, $"Reclaimed expired id {reclaim.Id}; created certificate id {created.Id}.");
                 }
             }
 
-            return Fail(config,
+            return Fail(jobHistoryId,
                 $"Cannot add certificate: program is at the {BudgetManager.MaxCertificates}-certificate limit. " +
                 "Delete expired or unused certificates and retry.");
         }
 
-        private JobResult HandleRemove(ManagementJobConfiguration config)
+        /// <summary>Remove a certificate by alias, blocking deletion when it is in use by a domain mapping.</summary>
+        internal JobResult PerformRemoval(string? alias, long jobHistoryId)
         {
-            var alias = config.JobCertificate?.Alias;
             if (string.IsNullOrWhiteSpace(alias))
-                return Fail(config, "No alias supplied for Remove.");
+                return Fail(jobHistoryId, "No alias supplied for Remove.");
 
             var existing = Client!.GetAllCertificatesAsync().GetAwaiter().GetResult();
-            var target = existing.FirstOrDefault(c => AliasMatches(c, alias!));
-            if (target == null)
+            var matches = existing.Where(c => CertMatcher.AliasMatches(c, alias!)).ToList();
+            if (matches.Count == 0)
             {
                 Logger.LogInformation("Remove: no certificate matched alias '{Alias}'; treating as already removed.", alias);
-                return Success(config, $"No certificate matched alias '{alias}'.");
+                return Success(jobHistoryId, $"No certificate matched alias '{alias}'.");
             }
 
+            if (matches.Count > 1)
+            {
+                var ids = string.Join(", ", matches.Select(m => m.Id.ToString(CultureInfo.InvariantCulture)));
+                return Fail(jobHistoryId,
+                    $"Alias '{alias}' matches multiple certificates (ids: {ids}). Remove by the disambiguated alias or resolve the duplicate names first.");
+            }
+
+            var target = matches[0];
+
             if (target.IsAdobeManaged)
-                return Fail(config, $"Certificate '{alias}' is Adobe-managed (DV) and cannot be removed by this extension.");
+                return Fail(jobHistoryId, $"Certificate '{alias}' is Adobe-managed (DV) and cannot be removed by this extension.");
 
             // Safe-delete: block if any domain mapping references the cert.
             var mappings = Client.GetDomainMappingsForCertificateAsync(target.Id).GetAwaiter().GetResult();
             if (mappings.Count > 0)
             {
                 var names = string.Join(", ", mappings.Select(m => m.DomainName ?? m.DomainMappingId.ToString(CultureInfo.InvariantCulture)));
-                return Fail(config,
+                return Fail(jobHistoryId,
                     $"Certificate id {target.Id} is in use by domain mapping(s): {names}. Remove the mapping(s) before deleting.");
             }
 
             Client.DeleteCertificateAsync(target.Id).GetAwaiter().GetResult();
-            return Success(config, $"Deleted certificate id {target.Id}. Run the pipeline to fully undeploy.");
+            return Success(jobHistoryId, $"Deleted certificate id {target.Id}. Run the pipeline to fully undeploy.");
         }
+
+        private static int CountChainCerts(string? chainPem) =>
+            string.IsNullOrEmpty(chainPem)
+                ? 0
+                : chainPem.Split("-----BEGIN CERTIFICATE-----").Length - 1;
 
         private static string? ValidatePlatformRules(SplitCertificate split)
         {
@@ -187,27 +237,23 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
             return $"Unsupported key algorithm '{split.KeyAlgorithm}'.";
         }
 
-        private static bool AliasMatches(SslCertificateRepresentation cert, string alias) =>
-            string.Equals(cert.Name, alias, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(cert.Id.ToString(CultureInfo.InvariantCulture), alias, StringComparison.Ordinal);
-
-        private JobResult Success(ManagementJobConfiguration config, string message)
+        private JobResult Success(long jobHistoryId, string message)
         {
             Logger.LogInformation("{Message}", message);
             return new JobResult
             {
-                JobHistoryId = config.JobHistoryId,
+                JobHistoryId = jobHistoryId,
                 Result = OrchestratorJobStatusJobResult.Success,
                 FailureMessage = string.Empty,
             };
         }
 
-        private JobResult Fail(ManagementJobConfiguration config, string message)
+        private JobResult Fail(long jobHistoryId, string message)
         {
             Logger.LogError("{Message}", message);
             return new JobResult
             {
-                JobHistoryId = config.JobHistoryId,
+                JobHistoryId = jobHistoryId,
                 Result = OrchestratorJobStatusJobResult.Failure,
                 FailureMessage = message,
             };

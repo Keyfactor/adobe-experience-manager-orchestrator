@@ -1,0 +1,19 @@
+name: Keyfactor Release Workflow
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, closed, synchronize, edited, reopened]
+  push:
+  create:
+    branches:
+      - 'release-*.*'
+
+jobs:
+  call-starter-workflow:
+    uses: keyfactor/actions/.github/workflows/starter.yml@v5
+    secrets:
+      token: ${{ secrets.V2BUILDTOKEN}} # REQUIRED
+      gpg_key: ${{ secrets.KF_GPG_PRIVATE_KEY }} # Only required for golang builds
+      gpg_pass: ${{ secrets.KF_GPG_PASSPHRASE }} # Only required for golang builds
+      scan_token: ${{ secrets.SAST_TOKEN }} # REQUIRED
