@@ -1,18 +1,19 @@
 {
-  "$schema": "https://keyfactor.github.io/integration-manifest-schema.json",
+  "$schema": "https://keyfactor.github.io/v2/integration-manifest-schema.json",
   "integration_type": "orchestrator",
   "name": "Adobe Experience Manager (Cloud Manager) Orchestrator",
-  "status": "prototype",
-  "link_github": true,
+  "status": "production",
   "update_catalog": false,
-  "support_level": "kf-community",
-  "description": "Universal Orchestrator extension for managing customer-managed (OV/EV) TLS/SSL certificates on Adobe Experience Manager as a Cloud Service via the Adobe Cloud Manager API.",
+  "link_github": true,
+  "support_level": "kf-supported",
   "release_dir": "AEMCM.Orchestrator/bin/Release",
+  "release_project": "AEMCM.Orchestrator/AEMCM.Orchestrator.csproj",
+  "description": "The Adobe Experience Manager (Cloud Manager) Universal Orchestrator extension manages customer-managed (OV/EV) TLS/SSL certificates on Adobe Experience Manager as a Cloud Service via the Adobe Cloud Manager API, supporting inventory, enrollment, removal, and discovery.",
   "about": {
     "orchestrator": {
       "UOFramework": "10.4",
-      "pam_support": true,
       "keyfactor_platform_version": "10.4",
+      "pam_support": true,
       "store_types": [
         {
           "Name": "Adobe Experience Manager Cloud Manager",
@@ -21,17 +22,18 @@
           "ServerRequired": true,
           "BlueprintAllowed": false,
           "PowerShell": false,
+          "LocalStore": false,
           "PrivateKeyAllowed": "Required",
-          "SupportsCustomAlias": "Required",
           "CustomAliasAllowed": "Required",
-          "StorePathType": "Freeform",
+          "StorePathType": "",
           "StorePathValue": "",
+          "ClientMachineDescription": "The Adobe Cloud Manager API base URL. Enter 'https://cloudmanager.adobe.io'.",
+          "StorePathDescription": "The numeric Cloud Manager program identifier (programId) that this store manages; for example, '12345'. One store maps to one program.",
           "SupportedOperations": {
             "Add": true,
             "Remove": true,
-            "Enrollment": false,
             "Discovery": true,
-            "Inventory": true
+            "Enrollment": false
           },
           "PasswordOptions": {
             "EntrySupported": false,
@@ -42,32 +44,36 @@
             {
               "Name": "ImsOrgId",
               "DisplayName": "IMS Organization ID",
-              "Type": "Secret",
+              "Description": "The Adobe IMS Organization ID (e.g. 'XXXXXXXX@AdobeOrg'), sent as the 'x-gw-ims-org-id' header on Cloud Manager API requests. This is an identifier, not a credential.",
+              "Type": "String",
               "DependsOn": "",
               "DefaultValue": "",
               "Required": true,
-              "Description": "Adobe IMS Org ID sent as the x-gw-ims-org-id header."
+              "IsPAMEligible": false
             },
             {
               "Name": "ImsTokenUrl",
               "DisplayName": "IMS Token Endpoint",
+              "Description": "The Adobe IMS OAuth Server-to-Server token endpoint used to obtain access tokens.",
               "Type": "String",
               "DependsOn": "",
               "DefaultValue": "https://ims-na1.adobelogin.com/ims/token/v3",
-              "Required": false,
-              "Description": "Adobe IMS OAuth Server-to-Server token endpoint."
+              "Required": true,
+              "IsPAMEligible": false
             },
             {
               "Name": "ImsScopes",
               "DisplayName": "IMS Scopes",
+              "Description": "Comma-separated IMS scopes requested for the access token.",
               "Type": "String",
               "DependsOn": "",
               "DefaultValue": "openid,AdobeID,read_organizations,additional_info.projectedProductContext",
-              "Required": false,
-              "Description": "Comma-separated IMS scopes requested for the access token."
+              "Required": true,
+              "IsPAMEligible": false
             }
           ],
-          "EntryParameters": []
+          "EntryParameters": [],
+          "JobProperties": []
         }
       ]
     }
