@@ -223,18 +223,21 @@ the Keyfactor Command Portal
    The Adobe IMS Organization ID (e.g. 'XXXXXXXX@AdobeOrg'), sent as the 'x-gw-ims-org-id' header on Cloud Manager API requests. This is an identifier, not a credential.
 
    ![AEMCM Custom Field - ImsOrgId](docsource/images/AEMCM-custom-field-ImsOrgId-dialog.svg)
+   ![AEMCM Custom Field - ImsOrgId](docsource/images/AEMCM-custom-field-ImsOrgId-validation-options-dialog.svg)
 
 
    ###### IMS Token Endpoint
    The Adobe IMS OAuth Server-to-Server token endpoint used to obtain access tokens.
 
    ![AEMCM Custom Field - ImsTokenUrl](docsource/images/AEMCM-custom-field-ImsTokenUrl-dialog.svg)
+   ![AEMCM Custom Field - ImsTokenUrl](docsource/images/AEMCM-custom-field-ImsTokenUrl-validation-options-dialog.svg)
 
 
    ###### IMS Scopes
    Comma-separated IMS scopes requested for the access token.
 
    ![AEMCM Custom Field - ImsScopes](docsource/images/AEMCM-custom-field-ImsScopes-dialog.svg)
+   ![AEMCM Custom Field - ImsScopes](docsource/images/AEMCM-custom-field-ImsScopes-validation-options-dialog.svg)
 
 
    </details>
