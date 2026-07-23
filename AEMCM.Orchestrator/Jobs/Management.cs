@@ -9,6 +9,7 @@
 using System;
 using System.Globalization;
 using System.Linq;
+using Keyfactor.Extensions.Orchestrator.AEMCM.Client;
 using Keyfactor.Extensions.Orchestrator.AEMCM.Client.Models;
 using Keyfactor.Extensions.Orchestrator.AEMCM.Logic;
 using Keyfactor.Logging;
@@ -55,6 +56,12 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
                     _ => Fail(config.JobHistoryId, $"Unsupported operation '{config.OperationType}'."),
                 };
             }
+            catch (CloudManagerApiException apiEx)
+            {
+                // Message is already an operator-friendly summary of the Cloud Manager error.
+                Logger.LogError(apiEx, "AEMCM Management: Cloud Manager API error");
+                return Fail(config.JobHistoryId, apiEx.Message);
+            }
             catch (Exception ex)
             {
                 Logger.LogError(ex, "AEMCM Management failed");
@@ -94,6 +101,13 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
                 PrivateKey = new PrivateKeyValue { Value = split.PrivateKeyPkcs8Pem },
                 Chain = split.ChainPem, // leaf already excluded by PfxSplitter
             };
+
+            // Pre-send diagnostic summary. Never logs private key material — only shape/metadata,
+            // so the first upload against a real cert is easy to diagnose (e.g. an empty chain).
+            Logger.LogDebug(
+                "Prepared certificate for upload: name={Name}, CN={CommonName}, SANs={SanCount}, key={KeyAlgorithm}-{KeySize}, chainCerts={ChainCount}.",
+                body.Name, split.CommonName, split.SubjectAlternativeNames.Count,
+                split.KeyAlgorithm, split.KeySize, CountChainCerts(split.ChainPem));
 
             // 3. Decide update vs add.
             var existing = Client!.GetAllCertificatesAsync().GetAwaiter().GetResult();
@@ -195,6 +209,11 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM
             Client.DeleteCertificateAsync(target.Id).GetAwaiter().GetResult();
             return Success(jobHistoryId, $"Deleted certificate id {target.Id}. Run the pipeline to fully undeploy.");
         }
+
+        private static int CountChainCerts(string? chainPem) =>
+            string.IsNullOrEmpty(chainPem)
+                ? 0
+                : chainPem.Split("-----BEGIN CERTIFICATE-----").Length - 1;
 
         private static string? ValidatePlatformRules(SplitCertificate split)
         {

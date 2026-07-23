@@ -9,11 +9,13 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Keyfactor.Extensions.Orchestrator.AEMCM;
@@ -172,9 +174,12 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM.Client
 
                 if (!response.IsSuccessStatusCode)
                 {
+                    var statusCode = (int)response.StatusCode;
+                    // Log the full raw response for troubleshooting; surface a clean message to the job.
+                    _logger.LogError("Cloud Manager {Method} {Path} failed ({Status}): {Body}",
+                        method, path, statusCode, payload);
                     throw new CloudManagerApiException(
-                        (int)response.StatusCode,
-                        $"{method} {path} failed ({(int)response.StatusCode}): {Truncate(payload)}");
+                        statusCode, FormatError(method, path, statusCode, payload), payload);
                 }
 
                 if (typeof(T) == typeof(object) || string.IsNullOrWhiteSpace(payload))
@@ -188,14 +193,83 @@ namespace Keyfactor.Extensions.Orchestrator.AEMCM.Client
 
         private static string Truncate(string s, int max = 500) =>
             string.IsNullOrEmpty(s) || s.Length <= max ? s : s.Substring(0, max) + "…";
+
+        /// <summary>
+        /// Translates a Cloud Manager error response into a concise, operator-friendly message.
+        /// The OV/EV policy rejection is special-cased into a single clear sentence; other
+        /// validation errors are surfaced as their distinct messages. Falls back to a truncated
+        /// raw body when the payload isn't a recognized error shape.
+        /// </summary>
+        internal static string FormatError(HttpMethod method, string path, int statusCode, string payload)
+        {
+            CloudManagerErrorResponse? error = null;
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(payload))
+                    error = JsonSerializer.Deserialize<CloudManagerErrorResponse>(payload, AemcmJson.Options);
+            }
+            catch (JsonException)
+            {
+                // Not a JSON error body — fall through to the raw fallback.
+            }
+
+            var errors = error?.AdditionalProperties?.Errors;
+            if (errors != null && errors.Count > 0)
+            {
+                // The certificate-policy rejection is the common, actionable case — keep it simple.
+                if (errors.Any(e => string.Equals(e.Code, "INVALID_CERTIFICATE_POLICY", StringComparison.OrdinalIgnoreCase)))
+                {
+                    return "The certificate is not supported: AEM Cloud Manager requires an OV or EV certificate. " +
+                           "DV and self-signed certificates are rejected.";
+                }
+
+                var messages = errors
+                    .Select(e => e.Message)
+                    .Where(m => !string.IsNullOrWhiteSpace(m))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (messages.Count > 0)
+                {
+                    var title = string.IsNullOrWhiteSpace(error!.Title) ? "Cloud Manager rejected the request" : error.Title!;
+                    return $"{title}: {string.Join("; ", messages)}.";
+                }
+            }
+
+            return $"{method} {path} failed ({statusCode}): {Truncate(payload)}";
+        }
     }
 
-    /// <summary>Carries the HTTP status code so callers can special-case (e.g. 404, 429).</summary>
+    /// <summary>Cloud Manager RFC-7807-style error response with a nested validation-errors list.</summary>
+    internal sealed class CloudManagerErrorResponse
+    {
+        [JsonPropertyName("title")] public string? Title { get; set; }
+        [JsonPropertyName("status")] public int Status { get; set; }
+        [JsonPropertyName("additionalProperties")] public CloudManagerErrorDetails? AdditionalProperties { get; set; }
+    }
+
+    internal sealed class CloudManagerErrorDetails
+    {
+        [JsonPropertyName("errors")] public List<CloudManagerFieldError> Errors { get; set; } = new();
+    }
+
+    internal sealed class CloudManagerFieldError
+    {
+        [JsonPropertyName("field")] public string? Field { get; set; }
+        [JsonPropertyName("code")] public string? Code { get; set; }
+        [JsonPropertyName("message")] public string? Message { get; set; }
+    }
+
+    /// <summary>Carries the HTTP status code and raw response body so callers can special-case or log.</summary>
     public class CloudManagerApiException : Exception
     {
         public int StatusCode { get; }
+        public string? ResponseBody { get; }
 
-        public CloudManagerApiException(int statusCode, string message) : base(message) =>
+        public CloudManagerApiException(int statusCode, string message, string? responseBody = null) : base(message)
+        {
             StatusCode = statusCode;
+            ResponseBody = responseBody;
+        }
     }
 }
