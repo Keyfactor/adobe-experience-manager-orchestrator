@@ -1,7 +1,7 @@
 {
   "$schema": "https://keyfactor.github.io/v2/integration-manifest-schema.json",
-  "integration_type": "orchestrator",
   "name": "Adobe Experience Manager (Cloud Manager) Orchestrator",
+  "integration_type": "orchestrator",
   "status": "production",
   "update_catalog": false,
   "link_github": true,
